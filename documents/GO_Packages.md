@@ -169,3 +169,137 @@ func main() {
 
 Go uses named typing for non-function user-declared types
 
+# Package Organization
+
+I never really understood Go's package organization, like does every package have main at root? can packages extend to multiple directories? how do subpackages work? etc.
+Below is just my notes from reading up some stuff on Go package organization.
+
+## Basic Rule of Thumb: One Directory = One Package
+In Go, a directory holds a single package (ofcousrse there are exceptions, like some test patterns). Typically, the package name you declare at the top of each `.go` file 
+in that directory is the same for all files in that directory. For example:
+```
+myrepo/
+  main.go          // declares "package main"
+  helpers.go       // also declares "package main" if it's in the same dir
+  mypkg/
+    stuff.go       // declares "package mypkg"
+  anotherpkg/
+    things.go      // declares "package anotherpkg"
+```
+
+## Packages vs Modules
+Module: Defined by your `go.mod` file (for example, `module github.com/aziz-shoko/dsa-go`). This is the "root" that Go uses when referencing your code externally or internally.
+
+Packages: Subdirectories within your module that hold Go code for different functionalities
+
+For example: if `go.mod` says:
+```Go
+module github.com/you/myrepo
+```
+
+And you have a directory structure like:
+```
+myrepo/
+  main.go               // package main
+  mypkg/
+    stuff.go            // package mypkg
+  anotherpkg/
+    things.go           // package anotherpkg
+```
+
+Then in `main.go`, if you want to import `mypkg`, you would have to do:
+```Go
+import (
+    "github.com/you/myrepo/mypkg"
+)
+```
+
+And ofcourse if `anotherpkg` depended on `mypkg`, then inside `anotherpkg/things.go` you'd do:
+```Go
+import (
+    "github.com/you/myrepo/mypkg"
+)
+```
+
+## The Special "package main"
+
+"package main" is the package that produces an executable. It must have a `func main()` entry point somewhere in its file
+
+Any package other than main is a library package. It can't be run directly, but can be imported. In other words, you can't just do `go run <gofilename>` 
+unless it is specifically `package main` with entry point `func main()`. To run the library package files, you gotta use the `test` package to run tests against it 
+and see if they actually work. 
+
+## Making subpackages vs Putting Everything in `package main`
+
+### Subpackages
+You typically craete separate directories (subpackages) to keep your code clean.
+For example: if you have business logic or utility functions, you don't want them all cluttered in `main.go`. Instead you would have `main.go` in the root under `package main`
+and break other specific components into its packages in directories and import them into `main.go` and run it like that for best organization
+
+### Multiple Directories But Same Package Name
+Its possible to have files in multiple directories under all in the same package but it is not typical and is not recommended. You rarely see `package main` repeated in multiple
+subdirectories. If you do, they have to compile together as a single main package, which is weird and can get messy.
+
+### Everything in package main
+For small projects, you just have everything in package main. This is not a good approach when your code grows because it will lack modular organization.
+
+## Referencing Packages
+
+### Within the same module:
+Use the **module path + subdirectory** convention. For example, if your module is github.com/you/myrepo, and you have a subpackage in mypkg/,
+the import path is github.com/you/myrepo/mypkg.
+
+### External Imports
+If you import some external library (as in pulling in code from seperate module outside your code), you refer to that library's module path. For example:
+```Go
+import "github.com/go-sql-driver/mysql"
+```
+
+## Package Interdependency
+As mentioned earlier in the document, **Circular Imports Are Not Allowed**.
+
+Go does not permit circular imports. If package A imports package B, then package B cannot import package A.
+So design your code so that dependencies flow one way. If you hit a circular import issue, you typically need to 
+extract common pieces into a third package that both A and B can import.
+
+## Typical Project Layout Example
+A more complete example might look like this:
+```
+myrepo/
+  go.mod             // module github.com/you/myrepo
+  cmd/
+    myapp/
+      main.go        // package main (entry point)
+  internal/
+    database/
+      db.go          // package database
+    config/
+      config.go      // package config
+  pkg/
+    helpers/
+      helpers.go     // package helpers
+  // etc.
+```
+
+* The `cmd/myapp/` folder is where the "main" package lives. That's your actual executable.
+* `internal` contains packages meant to be private to your module (a Go convention)
+* `pkg` contains "public" or well-organized library code that can be imported by other packages (and potentially other modules)
+  
+Then in `cmd/myapp/main.go`, you might do:
+```Go
+package main
+
+import (
+    "github.com/you/myrepo/internal/database"
+    "github.com/you/myrepo/internal/config"
+    "github.com/you/myrepo/pkg/helpers"
+)
+
+func main() {
+    cfg := config.Load()           // just an example
+    dbConn := database.Connect(cfg)
+    result := helpers.DoStuff(dbConn)
+    // ...
+}
+```
+
