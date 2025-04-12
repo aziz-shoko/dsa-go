@@ -213,7 +213,7 @@ func main() {
 
     // give only the first three popular words
 	for _, s := range ss[:3] {
-		fmt.Println(s.key, "apperas", s.val, "times")
+		fmt.Println(s.key, "appears", s.val, "times")
 	}
 }
 ```
