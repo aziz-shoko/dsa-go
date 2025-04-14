@@ -217,3 +217,6 @@ func main() {
 	}
 }
 ```
+
+# Slices in Detail
+To understand nil slices vs empty slices, length vs capacity, go to: [link](https://www.youtube.com/watch?v=pHl9r3B2DFI&list=PLoILbKo9rG3skRCj37Kn5Zj803hhiuRK6&index=12)
