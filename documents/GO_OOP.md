@@ -55,6 +55,9 @@ Three main types are recognized:
 
 In this case, behavior is completely separate from implementation, which is good for abstraction. 
 
+The key insight: polymorphism is about a single interface with multiple possible implementations underneath.
+When you call a method through an interface, the actual behavior depends on the concrete type that implements the interface.
+
 
 ### Inheritance
 Inheritance has conflicting meanings:
