@@ -108,21 +108,3 @@ Not having classes can be liberating!
 Go allows defining methods on any user-defined type, rather than only a "class"
 
 Go allows any object to implement the method's of an interface, not just a subclass
-
-
-## Interfaces
-
-An interface specifies abstract behavior in terms of methods. 
-
-Basically its a collection of methods to my knowledge so far. And it automatically maps to the right method based on passed in object.
-
-```
-type Stringer interface {
-    String() string
-}
-```
-
-Concrete types offer methods that satisfy the interface. In other words, interface lists a list of methods that an object with concrete type must provide so that an interface can map to that object.
-
-
-
