@@ -563,3 +563,234 @@ interface so we can consolidate them under a single Library slice (this is more 
 * Although you can have a slice of interface type, an interface only holds the methods, so the attributes of the structs cannot be accessed
 directly. To access type specific properties, you need to use type assertions. Basically type assertion is sort of like casting to the original
 struct type so that you can access its attributes. The if statement example is show in the code above
+
+
+## Nil Interfaces
+An interface variable is nil until initialized
+
+It really has two parts (interface variable is also a descriptor that contains two pointers):
+* a value or pointer of some type (A pointer to the concrete value (like a struct) or the copy of the value itself)
+* a pointer to type information (known as interface talbe/itable) so the correct actual method can be identified
+
+```Go
+var r io.Reader 		// nil until initialized
+var b *bytes.Buffer 	// ditto (ditto means same thing)
+
+r = b 					// r is no longer nil!
+						// but it has a nil pointer to a Buffer
+						// Basically, r now contains:
+						// - a nil pointer value
+						// a non-nil pointer to *bytes.Buffer's interface table
+						// so r != nil would evaluate to true
+```
+
+This two-pointer representation is why `r = b` results in a non-nil interface even though `b` itself is nil. 
+Precisely:
+* The interface descriptor's type pointer is non-nil (points to *bytes.Buffer's itable)
+* The interface descriptor's value pointer is nil (doesn't point to an actual Buffer)
+
+The interface descriptor contains: 
+1. Value pointer: Points to the actual data of the concrete type(or contains the data itself for the small values)
+2. Type pointer: Points to the interface table(itable) which contains:
+	* Type information about the concrete type
+	* Pointers to the method implementations for this specific concrete type
+	* Runtime type information for reflection
+
+So when you call a method on an interface, Go uses the type information to find the correct implementation to call. 
+Even if the value pointer is nil, the methods can still get called and panic can only happen if a method tries to access the value itself.
+
+## Error type in Go
+In Go, `error` is a special type, but its really an interface
+```Go
+type error interface {
+	func Error() string // a function that handles the error and returns string message of the error
+}
+```
+We can compare it to nil unless we make a mistake
+The mistake is to store a nil pointer to a concrete type in the error variable
+
+For example:
+```Go
+package main
+
+import (
+	"fmt"
+)
+
+type errFoo struct {
+	err error
+	path string
+}
+
+func (e errFoo) Error() string {
+	return fmt.Sprintf("%s: %s", e.path, e.err) 
+}
+
+func XYZ(a int) *errFoo { // instead of returning the concrete type, should return 'error'
+	return nil
+}
+
+func main() {
+	var err error = XYZ(1) 	// BAD: interface gets a nil concret ptr
+
+	if err != nil {
+		fmt.Println("oops")
+	} else {
+		fmt.Println("OK!")
+	}
+}
+```
+
+As mentioned in section above, a nil assignemnt to nil interface makes the interface not nil.
+So, because the error is an interface, we dont return concrete types for errors because then the 
+error interface is none nil and can trigger the err message when comparing `err != nil`. 
+Therefore, it is Go idiom to always return the interface type error from functions and not concrete 
+error types. 
+
+## Pointer vs Value receivers 
+A method can be defined on a pointer to a type
+
+```Go
+type Point struct {
+	x,y float32
+}
+
+func (p *Point) Add(x, y float32) { // Pointer receiver changes the struct values itself directly
+	p.x, p.y = p.x + x, p.y + y		
+}
+
+func (p Point) OffSetOf(p1 Point) (x float32, y float32) { // Value reciever can read values from struct but any changes don't change the struct value itself
+	x, y = p.x - p1.x, p.y - p1.y
+	return // nakes return of x and y
+}
+
+// Pointer methods may be called on non-pointers and vice versa
+// Go automatically use * or & as needed
+
+p1 := new(Point) 		// *Point, at (0.0)
+p2 := Point{1, 1}		// holds value of Point{1,1} struct directly, not a descriptor
+
+p1.OffSetOf(p2)			// same as (*p1).OffSetOf(p2)
+p2.Add(3, 4)			// same as (&p2).Add(3, 4)
+```
+
+But, & may only be applied to objects that are addressable (meaning anything you can obtain the memory address of using &)
+
+### Compatability between objects and receiver types
+
+| Compatability   | Pointer | L-Value | R-Value |
+|-----------------|---------|---------|---------|
+|pointer receiver | OK		| OK&	  | Not OK	|
+|value receiver   | OK*		| OK      | OK		|
+
+* L-value: An expression that can appear on the left side of an assignemtn. These are
+addressable and have a memory location. Varialbes like `var p Point` are L-Values
+* R-Value: An expression that can only appear on the right side of an assignment. These are
+temporary values that don't have persistent memory address. Literals and composite literals like `Point{1,1}` are R-values
+
+A method requiring a pointer receiver may only be called on an addressable object
+```Go
+var p Point
+
+p.Add(1, 2)				// OK, &p
+Point{1, 1}.Add(2,3)	// Not Ok, can't take address
+```
+
+Breaking Down the Table: 
+Pointer Receiver (func (p *Point) Method())
+* Pointer: ✓ OK
+  * When you call ptr.Method() where ptr is a pointer like *Point, it works directly.
+* L-Value: ✓ OK (with automatic address-taking)
+  * When you call p.Method() where p is an L-value like a variable, Go automatically takes the address with &p.
+* R-Value: ❌ Not OK
+  * When you call Point{1,1}.Method(), it fails because you can't take the address of a temporary value or literal.
+  * You can't do &Point{1,1}.Method() directly (though you could assign to a variable first).
+
+Value Receiver (func (p Point) Method())
+* Pointer: ✓ OK (with automatic dereferencing)
+  * When you call ptr.Method() where ptr is a pointer, Go automatically dereferences with *ptr.
+* L-Value: ✓ OK
+  * When you call p.Method() where p is an L-value, it works directly.
+* R-Value: ✓ OK
+  * When you call Point{1,1}.Method(), it works because value receivers accept any value of the correct type.
+
+## Consistency in receiver types
+If one method of a type takes a pointer receiver, then all its methods shuold take pointers*
+
+and in general objects of that type are probably not safe to copy.
+```Go
+type Buffer struct {
+	buf []byte
+	off int
+}
+
+func (b *Buffer) ReadString(delim byte) (string, error) {
+	...
+}
+```
+But of course there are cases when they shouldn't for reasons
+
+## Currying Functions
+Currying functions come from functional programming. Currying takes a ufnction and reduces its argument
+count by one (one argument gets bound, and a new function is returned)
+
+```Go
+func Add(a, b int) int {
+	return a + b
+}
+
+func AddToA(a int) func(int) int {
+	return func(b int) int {
+		return Add(a, b)
+	}
+}
+
+addTo1 := AddToA(1)
+fmt.Println(Add(1,2) == AddTo1(2)) // true
+```
+
+## Method Values
+A method value is a method closed over its receiver. 
+
+A selected method may be passed similar to a closure;
+the receiver is closed over at that point
+
+```Go
+func (p Point) Distance(q Point) float64 {
+	return math.Hypot(q.X - p.X, q.Y - q.X)
+}
+
+p := Point{1, 2}
+q := Point{4, 6}
+
+distanceFromP := p.Distance		// this is a method value
+fmt.Println(distanceFromP(q)) 	// and can be called later
+```
+
+## Interfaces in Practice
+1. Let consumers define interfaces (what minimal behavior do they require?)
+2. Re-use standard interfaces wherever possible
+3. Keep interface declarations small (The bigger the interface, the weaker the abstraction)
+4. Compose one-method interfaces into larger interfaces (if needed)
+5. Avoid coupling interfaces to particular type/implementations
+6. Accept interfaces, but return concrete types (let the consumer of the return type decide how to use it)
+"Be liberal in what you accept, be conservative in what you return"
+* Put the least restriction on what parameters you accept (the minimal interface)
+Dont require ReadWriteCloser if you only need to read
+
+* Avoid restricting the use of your return type (the concrete value you return might fit with many interfaces!)
+Returning *os.File is less restrictive than returning io.ReadWriteCloser because files have other useful methods
+
+Returning error is a good example of an 
+
+## Empty Interface
+The interface{} has no methods
+
+So it is satisfied by anything! (so it represents anything)
+
+Empty interfaces are commonly used; they're how the formatted I/O routines can print any type
+```Go
+func fmt.Printf(f string, args ...interface{})
+```
+
+Reflection is needed to determine what the concrete type is. (i will learn reflection later)
