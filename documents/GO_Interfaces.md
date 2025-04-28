@@ -564,6 +564,127 @@ interface so we can consolidate them under a single Library slice (this is more 
 directly. To access type specific properties, you need to use type assertions. Basically type assertion is sort of like casting to the original
 struct type so that you can access its attributes. The if statement example is show in the code above
 
+Below is further refinement after learning compositions.
+```Go
+package main
+
+import (
+	"fmt"
+)
+
+type LibraryResource struct {
+	Available bool
+	User      string
+	Title     string
+}
+
+func (b *LibraryResource) CheckOut(borrower string) {
+	b.Available = false
+	b.User = borrower
+}
+
+func (b *LibraryResource) Return() {
+	b.Available = true
+}
+
+func (b *LibraryResource) Status(itemType string) bool {
+	if b.Available {
+		fmt.Printf("The %[2]s %[1]s is available ", b.Title, itemType)
+		return b.Available
+	} else {
+		fmt.Printf("The %[2]s %[1]s is not available ", b.Title, itemType)
+		return false
+	}
+}
+
+type Books struct {
+	LibraryResource
+	Author    string
+	PageCount int
+}
+
+func (b *Books) Status() bool {
+	return b.LibraryResource.Status("book")
+}
+
+type DVDs struct {
+	LibraryResource
+	Director string
+	Runtime  int
+}
+
+func (b *DVDs) Status() bool {
+	return b.LibraryResource.Status("dvd")
+}
+
+type Magazines struct {
+	LibraryResource
+	IssueNumber     int
+	PublicationDate string
+}
+
+func (b *Magazines) Status() bool {
+	return b.LibraryResource.Status("magazine")
+}
+
+type LibraryItem interface {
+	CheckOut(string)
+	Return()
+	Status() bool
+}
+
+func checkOut(b LibraryItem, user string) {
+	b.CheckOut(user)
+}
+
+func returnItem(b LibraryItem) {
+	b.Return()
+}
+
+func getStatus(b LibraryItem) bool {
+	return b.Status()
+}
+
+func main() {
+	Library := []LibraryItem{
+		&Books{LibraryResource{true, "", "Harry Potter"}, "J.K. Rowling", 300},
+		&Books{LibraryResource{true, "", "Moby Dick"}, "Herman Melville", 100},
+		&DVDs{LibraryResource{true, "", "Transformers 1"}, "Michael bay", 90},
+		&DVDs{LibraryResource{true, "", "Transformers 2"}, "Michael bay", 110},
+		&Magazines{LibraryResource{true, "", "Mens Health"}, 150, "Nov 12, 2024"},
+		&Magazines{LibraryResource{true, "", "Womands Health"}, 645, "Nov 15, 2024"},
+	}
+
+	// Simulate some checkout interaction with library
+	checkOut(Library[0], "sam")
+	checkOut(Library[2], "jill")
+	checkOut(Library[4], "jack")
+
+	// should say false
+	fmt.Println(getStatus(Library[0]))
+	fmt.Println(getStatus(Library[2]))
+	fmt.Println(getStatus(Library[4]))
+
+	// Simulate some return interaction
+	returnItem(Library[0])
+	returnItem(Library[2])
+	returnItem(Library[4])
+
+	// should say true
+	fmt.Println(getStatus(Library[0]))
+	fmt.Println(getStatus(Library[2]))
+	fmt.Println(getStatus(Library[4]))
+
+	// messing around with type assertions
+	if book, ok := Library[0].(*Books); ok {
+		fmt.Println(book.Author)
+	}
+}
+```
+Here, the most important thing I learned is that Go likes to follow a "has a" relationship. So rather than have a hierarchical inheritance type of structure, it follows a structure where objects 
+just access each other for the data it needs. Here, a book, dvd, magazine all have a book, user, title fields, so it can be encansulated under one struct and can have other structs use its attributes/methods.
+This reduced the repetitive attributes and methods shared by all three original structs of book, dvd and magazine. 
+
 
 ## Nil Interfaces
 An interface variable is nil until initialized
