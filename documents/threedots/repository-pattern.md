@@ -126,22 +126,17 @@ import (
 	"net/http"
 )
 
-type userPayload struct {
+type tweetPayload struct {
 	Message  string `json:"message"`
 	Location string `json:"location"`
 }
 
-//	type Payload struct {
-//		ID int `json:"ID"`
-//	}
-//
-// I think the best way to store userPayload tweets is to compose it with existing userPayload
+// I think the best way to store tweetPayload tweets is to compose it with existing tweetPayload
 type tweet struct {
-	userPayload
+	tweetPayload
 	ID int `json:"ID"`
 }
 
-// var ID = 1
 // Below is me trying to decouple data logic (storage) from the http stuff
 // the http stuff will add the tweets data through this interface and not directly
 // manipulate the underlying storage directly, but by just calling this AddTweet method
@@ -169,7 +164,7 @@ type server struct {
 	repository TweetRepository
 }
 
-type Payload struct {
+type Reponse struct {
 	ID int `json:"ID"`
 }
 
@@ -192,7 +187,7 @@ func (s server) addTweet(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	u := userPayload{}
+	u := tweetPayload{}
 
 	if err := json.Unmarshal(body, &u); err != nil {
 		log.Println("Failed to unmarshal payload:", err)
@@ -201,22 +196,27 @@ func (s server) addTweet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := s.repository.AddTweet(tweet{
-		userPayload: u,
+		tweetPayload: u,
 	})
+	if err != nil {
+		log.Printf("Failed to add tweet: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 	fmt.Printf("Tweet: `%s` from %s\n", u.Message, u.Location)
 
 	// payload := map[string]int{"ID": ID}
-	payload := Payload{
+	resp := Reponse{
 		ID: id,
 	}
-	jsonBytes, err := json.Marshal(payload)
+	respJSON, err := json.Marshal(resp)
 	if err != nil {
 		log.Println("Failed to marshal:", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
-	w.Write(jsonBytes)
+	w.Write(respJSON)
 
 }
 ```
