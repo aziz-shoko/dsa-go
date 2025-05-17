@@ -759,3 +759,132 @@ Go-Specific Features:
 Lifecycle Management:
 * Workers exit when input channel closes
 * Results typically collected by counting expected items or using sync.WaitGroup
+
+# Channels in Detail
+[Youtube](https://www.youtube.com/watch?v=fCkxKGd6CVQ&list=PLoILbKo9rG3skRCj37Kn5Zj803hhiuRK6&index=26)
+
+## Channel state
+Channels block unless ready to read or write
+
+A channel is ready to write if
+* it has buffer space, or 
+* at least one ready is ready to read (rendezvous)
+
+A channel is ready to read if
+* it has unread data in its buffer, or
+* at least one writer is ready to write (rendezvous), or
+* it is closed
+
+Channels are unidirectional, but have two ends
+(which can be passed separately as parameters)
+```Go
+// An end for writing & closing
+func get(url string, ch chan<- result) {		// write-only end
+	...
+}
+
+// An end for reading
+func collect(ch <-chan result) map[string]int {	// read-only end
+	...
+}
+```
+
+### Closed Channels
+Closing a channel causes it to return the "zero" value
+(Unless it is a buffered channel with many values, then all the values in channel 
+will be processed and the default 0 value be sent at the end after the channel closes)
+We can receive a second value: is the channel closed?
+```Go
+// Buffered channels can hold values even if no one is receiving them immediately. 
+// Unbuffered channels require a receiver to be ready at the same time as the sender,
+// or the program blocks (deadlocks if nobody ever reads).
+func main() {
+	ch := make(chan int, 1)	// NOTICE: It is buffered channel
+	ch <- 1					// If it was unbuffered channel, then would be blocked here
+
+	b, ok := <-ch
+	fmt.Println(b, ok)		// 1 true
+
+	close(ch)
+
+	c, ok := <-ch
+	fmt.Println(c, ok)		// 0 false
+}
+```
+
+A channel can only be closed once (else it will panic)
+But why close a channel? if the channel doesn't have a value, then it is
+unreadable and gets blocked. By closing the channel, the default readable value
+of 0 is returned, so closing it makes it readable and signals to the receiver that 
+the channel is done and no more messages
+
+One of the main issues in working with goroutines is ending them
+* An unbuffered channel requires a reader and writer (a writer blocked on a channel with no reader will "leak")
+* Closing a channel is often a signal that work is done
+* Only one goroutine can close a channel (not many)
+* We may beed some way to coordinate closing a channel or stopping goroutines (beyon the channel itself)
+
+
+Nil Channels
+
+Reading or writing a channel that is nil always blocks *
+
+But a nil channel in a select block is ignored
+This can be powerful tool:
+* Use a channel to get input 
+* Suspend it by changing the channel variable to nil
+* You can even un-suspend it again
+* But close the channel if there really is no more input (EOF)
+
+### Channel State Reference
+## Go Channel State Reference
+
+| **State**        | **Receive**       | **Send**      | **Close**            |
+| ---------------- | ----------------- | ------------- | -------------------- |
+| **Nil**          | Block\*           | Block\*       | Panic                |
+| **Empty**        | Block             | Write         | Close                |
+| **Partly Full**  | Read              | Write         | Readable until empty |
+| **Full**         | Read              | Block         |                      |
+| **Closed**       | Default Value\*\* | Panic         | Panic                |
+| **Receive-only** | OK                | Compile Error | Compile Error        |
+| **Send-only**    | Compile Error     | OK            | OK                   |
+
+---
+
+* `select` ignores a nil channel since it would always block  
+* Reading a closed channel returns `(<default-value>, !ok)`
+
+### Rendezvous (unbuffered)
+By default, channels are unbuffered (rendezvous model)
+* the sender blocks until the receiver is ready (and vice versa)
+* the send always happens before the receive
+* the receive always returns before the send
+* the sender & receiver are synchronized
+
+### Buffering
+Buffering channels allows the sender to send without waiting
+* the sender deposits its items and returns immediately
+* the sender blocks only if the buffer is full
+* the receiver blocks if the buffer is empty
+* the sender & receiver run independently
+
+Common uses of buffered channels:
+* avoid goroutine leaks (from an abandoned channel)
+* avoid rendezvous pauses (performance improvement)
+
+Don't buffer until it's needed: buffereing may hide a race condition
+(Premature optimization, first always get the program to work properly and the optimize)
+Some testing may be required to find the right number of slots
+
+Special uses of buffered channels:
+* counting semaphore pattern
+
+Counting Semaphores
+A counting semaphore limits work in progress (or occupancy)
+
+Once it's "full" only one unit of work can enter for each one that leaves
+
+We model this with a buffered channel:
+* attempt to send (write) before starting work
+* the send will block if the buffer is full (occupancy is at max)
+* receive (read) when the work is done to free up a space in the buffer (this allows the next worker to start)
