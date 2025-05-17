@@ -382,3 +382,267 @@ func sendOrDrop(data []byte) {
 ```
 Don't use default inside a loop, the select will busy wait and waste CPU
 (once i get good at concurrency, a recommended read is: concurrency in go by katherine cox-buday)
+
+### Fan-In strategy example
+```Go
+package main
+
+import (
+	"math/rand"
+	"time"
+	"fmt"
+)
+
+func main() {
+	// Create channels for each service
+	authLogs := make(chan string)
+	orderLogs := make(chan string)
+	paymentsLogs := make(chan string)
+	
+	// Start services that continously generate logs
+	go generateAuthLogs(authLogs)
+	go generateOrderLogs(orderLogs)
+	go generatePaymentLogs(paymentsLogs)
+
+	// Fan-in to merge all logs into a single channel
+	mergedLogs := fanIn(authLogs, orderLogs, paymentsLogs)
+
+	// Consume from the merged channel
+	for log := range mergedLogs {
+		fmt.Println("LOG:", log)
+	}
+}
+
+func generateAuthLogs(out chan<- string) {
+	for {
+		time.Sleep(time.Duration(rand.Intn(3))* time.Second)
+		out <- "auth: user login"
+	}
+}
+
+func generateOrderLogs(out chan<- string) {
+	for {
+		time.Sleep(time.Duration(rand.Intn(3))* time.Second)
+		out <- "order: new order placed"
+	}
+}
+
+func generatePaymentLogs(out chan<- string) {
+	for {
+		time.Sleep(time.Duration(rand.Intn(3))* time.Second)
+		out <- "payment: transaction successful"
+	}
+}
+
+func fanIn(ch1, ch2, ch3 <-chan string) <-chan string {
+	merged := make(chan string)
+
+	go func() {
+		for {
+			select{
+			case log := <- ch1:
+				merged <- log
+			case log := <- ch2:
+				merged <-log
+			case log := <- ch3:
+				merged <- log
+			}
+		}
+	}()
+	
+	return merged 
+}
+```
+Characteristics of Fan-In Pattern
+
+Definition: Fan-in consolidates data from multiple sources into a single channel
+Key Components:
+
+Multiple input channels (producers)
+* A single output channel (consumer)
+* A multiplexer function that forwards messages from inputs to output
+
+Benefits:
+
+* Simplifies consumer code (reads from just one channel)
+* Decouples producers from consumers
+* Allows independent, concurrent producers to feed into a single processing pipeline
+
+Implementation Details:
+
+* Uses select to wait on multiple channels simultaneously
+* Runs in its own goroutine to avoid blocking
+* Can handle any number of input channels (though reflect.Select is needed for dynamic channel counts)
+
+Common Use Cases:
+
+* Log aggregation from multiple services
+* Combining results from parallel workers
+* Merging events from different sources
+* Implementing publish-subscribe patterns
+
+Go-Specific Features:
+
+* Natural implementation using Go's channel and select mechanism
+* Can be made generic to handle any number and type of channels
+* Often paired with the fan-out pattern for parallel processing
+
+Lifecycle Management:
+
+* Must handle channel closing properly
+* Can include timeout or cancellation mechanisms
+* Typical implementations run indefinitely until input channels close or context cancels
+
+### Time-Out example 
+```Go
+ 
+package main
+
+import (
+	"fmt"
+	"math/rand"
+	"time"
+)
+
+func main() {
+	services := []string{"auth", "payments", "inventory"}
+	results := make(chan string, 2)
+
+	for _, s := range services {
+		go func(s string) {
+			resultCh := make(chan string)
+
+			// Launch the check itself
+			go checkService(s, resultCh)
+
+			select {
+			case res := <-resultCh:
+				results <- res
+			case <-time.After(2 * time.Second):
+				results <- fmt.Sprintf("%s: timed out", s)
+			}
+		}(s)
+	}
+
+	for msg := range results {
+		fmt.Println(msg)
+	}
+
+}
+
+func checkService(service string, resultCh chan<- string) {
+	delay := time.Duration(rand.Intn(4)) * time.Second
+	time.Sleep(delay)
+
+	resultCh <- fmt.Sprintf("%s: healthy (responded in %v)", service, delay)
+}
+```
+The code above is asimple timeout strategy example, PROBABLY NOT BEST PRACTICE!
+Just done for learning purposes
+
+### Pipeline strategy example
+```Go
+package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+)
+
+func main() {
+	logged := make(chan string)
+	cleaned := make(chan string)
+	filtered := make(chan string)
+	results := make(chan []string)
+
+	go GenerateLogs(logged)
+	go CleanLogs(logged, cleaned)
+	go FilterLogs(cleaned, filtered)
+
+	go func() {
+		results <- StoreLogs(filtered)
+	}()
+
+	logs := <- results
+	fmt.Println("Stored Logs:", logs)
+}
+
+func GenerateLogs(out chan<- string) {
+	logs := []string{
+		"  ERROR Disk full  ",
+		"INFO system rebooted",
+		"Warning: low battery",
+		" error unable to write file ",
+		"Something went wrong",
+	}
+
+	for _, log := range logs {
+		time.Sleep(300 * time.Microsecond)
+		out <- log
+	}
+	close(out)
+}
+
+func CleanLogs(in <-chan string, out chan<- string) {
+	for rawLog := range in {
+		trimmedLog := strings.TrimSpace(rawLog)
+		cleanLog := strings.ToLower(trimmedLog)
+		out <- cleanLog
+	}
+	close(out)
+}
+
+func FilterLogs(in <-chan string, out chan<- string) {
+	for log := range in {
+		if strings.Contains(log, "error") {
+			out <- log
+		}
+	}	
+	close(out)
+}
+
+func StoreLogs(in <-chan string) []string {
+	var logs []string
+	for log := range in {
+		logs = append(logs, log)
+	}
+	return logs
+}
+```
+Pipeline Strategy Characteristics
+Definition: A pipeline processes data through a series of stages, where each stage receives values from the previous stage, performs some transformation, and sends results to the next stage.
+
+Key Components:
+* Input source (producer/generator)
+* One or more intermediate processing stages
+* Output sink (consumer/collector)
+* Channels connecting each stage
+
+Benefits:
+* Enables concurrent processing of different data items at different stages
+* Creates clear separation of concerns between processing steps
+* Allows for efficient resource utilization
+* Simplifies complex data transformations into discrete, manageable steps
+
+Implementation Details:
+* Each stage runs in its own goroutine
+* Stages are connected via channels
+* Each stage ranges over its input channel and produces values to its output channel
+* Channels are typically closed by the sender when no more data will be sent
+
+Common Use Cases:
+* Data processing workflows
+* ETL (Extract, Transform, Load) operations
+* Stream processing
+* Log processing (as in your example)
+
+Go-Specific Features:
+* Channel directionality (chan<- for send-only, <-chan for receive-only)
+* Range over channels to process all values until closure
+* Explicit channel closing to signal completion
+
+Lifecycle Management:
+* Upstream stages close outbound channels when done
+* Downstream stages detect completion through channel closure
+* Pipeline naturally terminates when all data is processed
