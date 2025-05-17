@@ -646,3 +646,116 @@ Lifecycle Management:
 * Upstream stages close outbound channels when done
 * Downstream stages detect completion through channel closure
 * Pipeline naturally terminates when all data is processed
+
+### Fan-Out code example
+```Go
+package main
+
+import (
+	"fmt"
+	"math/rand"
+	"strings"
+	"time"
+)
+
+func main() {
+	tasks := make(chan string, 10)
+	results := make(chan string)
+
+	// start worker pool
+	for range 3 {
+		go worker(tasks, results)
+	}
+
+	// Generate tasks in the background
+	go generateTasks(tasks)
+
+	// Collect and display results
+	expectedResults := 6 // 6 images
+	for range expectedResults {
+		img := <-results
+		fmt.Println(img)
+	}
+
+}
+
+// generateTasks simulates creating a batch of image processing tasks
+func generateTasks(out chan<- string) {
+	images := []string{
+		"vacation.jpg",
+		"family.jpg",
+		"dog.jpg",
+		"graduation.jpg",
+		"wedding.jpg",
+		"party.jpg",
+	}
+
+	for _, img := range images {
+		out <- img
+	}
+	close(out)
+}
+
+// processImage simulates image processing (resize, filter, etc.)
+func processImage(img string) string {
+	fmt.Printf("Processing image: %s\n", img)
+
+	// Simulate processing time (random duration)
+	processingTime := time.Duration(1+rand.Intn(3)) * time.Second
+	time.Sleep(processingTime)
+
+	// return processed image (just a string transformation in this case)
+	return strings.ToUpper(img) + " [PROCESSED]"
+}
+
+// Implement a worker function that takes tasks from a channel
+// and sends results to another channel
+func worker(in <-chan string, out chan<- string) {
+	for task := range in {
+		processedImage := processImage(task)
+		out <- processedImage
+	}
+}
+```
+The code above is an example of Fan-Out strategy because from one channel of tasks, we are spawning
+out multiple goroutines to handle tasks
+
+Fan-Out Pattern in Go - Key Characteristics
+Definition: Fan-out distributes work across multiple goroutines to process data concurrently, allowing parallel execution of similar tasks.
+Key Components:
+* A single source channel of tasks/data
+* Multiple worker goroutines that all consume from this channel
+* Each worker performs the same operation on different data items
+* (Optional) A results channel for collecting processed data
+
+Benefits:
+* Parallelizes CPU-bound operations for better performance
+* Distributes workload evenly across available resources
+* Speeds up batch processing operations
+* Provides natural load balancing (faster workers process more items)
+
+
+Implementation Details:
+* Workers compete for tasks from the shared input channel
+* Channel ensures each task is processed exactly once
+* Workers typically run identical code but on different data
+* Each worker runs until input channel is closed and drained
+
+
+Common Use Cases:
+* Batch processing (images, documents, etc.)
+* CPU-intensive calculations on multiple items
+* Parallel API requests
+* Data transformations on large datasets
+
+
+Go-Specific Features:
+* Uses goroutines for lightweight concurrent execution
+* Works well with Go's channel mechanics
+* Naturally balances work across available cores
+* Often paired with fan-in for collecting results
+
+
+Lifecycle Management:
+* Workers exit when input channel closes
+* Results typically collected by counting expected items or using sync.WaitGroup
