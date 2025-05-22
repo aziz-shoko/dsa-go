@@ -888,3 +888,135 @@ We model this with a buffered channel:
 * attempt to send (write) before starting work
 * the send will block if the buffer is full (occupancy is at max)
 * receive (read) when the work is done to free up a space in the buffer (this allows the next worker to start)
+
+
+# Concurrent File Processing
+[Youtube](https://www.youtube.com/watch?v=SPD7TykYy5w&list=PLoILbKo9rG3skRCj37Kn5Zj803hhiuRK6&index=27)
+[Raw Code](https://github.com/matt4biz/go-class-walk/blob/trunk/walk1/walk1.go)
+
+The video above shows a program to remove duplicate files from a given directory.
+It has 4 approaches for doing so.
+
+## Sequential Processing
+First approach is simple sequential processing, nothing more and just a straightforward program.
+
+The program flow:
+main -> searchFile -> hash -> searchFile -> main
+
+Basically main calls searchFile and searchFile calls hash function to hash content and adds it back to hashMap 
+in searchFile and is returned to main for main to start again and print the content of hashMap
+
+## A concurrent approach (like map-reduce)
+Use a fixed pool of goroutines and a collector and channels
+
+Basically, the hashing of files is a independent process. Because it is an independent process, goroutines can be used.
+One good way to think about developing a goroutine architecture is to start at the independent process and figure out the
+inputs and outputs. Then, treat the independent process as a goroutine and its input as a channel and its output as a channel.
+For example:
+```
+                 ┌────────────┐
+                 │  searchTree│
+                 └─────┬──────┘
+                       ↓  (file paths)
+                [paths channel]
+                       ↓
+               ┌───────┴────────┐
+               │ Multiple Worker│ goroutines
+               │ (processFiles) │
+               └───────┬────────┘
+                       ↓ (hash + path)
+                [pairs channel]
+                       ↓
+               ┌───────┴────────┐
+               │  collectHashes│
+               └───────┬────────┘
+                       ↓
+                [results channel]
+
+```
+
+In this case, processFiles is a independent process and to hash a file, we need the file's path inorder to gets its file 
+descriptor. So a paths channel was created to actually pass this into the processfile goroutines and these goroutines output
+the hashed pairs which then also have to be outputted to a channel so that others can read from. Its outputted 
+to a channel and read from a centralized collectHashes function, instead of goroutines writing directly to the hashMap is because
+the hashMap is a shared memory and all goroutines accessed it could cause a race condition. To prevent that, goroutines write to a 
+channel and something else can process the outputs from the channel. This is known as 'owner goroutine pattern', where only one 
+goroutine owns the mutable state. Finally, its important to actually close the channels and spin down the goroutines properly.
+First, once the Walk finsishes sending all the file paths, the paths channel can be closed and the goroutines reading from it will
+eventually finish processing and die. We have to wait before closing the pairs channel because these goroutines could still be 
+writing to the pairs channel and if pairs is prematurely closed, then these goroutines can get stuck waiting for a channel to write to.
+So only after the goroutines finish, the pairs channel can also be closed and once that is closed, the collectHash goroutine can die too.
+
+CPU-bound work → focus on parallelism (distribute work across cores)
+I/O-bound work → focus on concurrency (manage multiple operations in progress)
+
+
+## Sync and Concurrent Subdirectories
+The next optimization used was putting subdirectories in its own goroutines. So when a subdirectory is encountered,
+we just launch another goroutine and move on to next file/directory. But this would spawn unknown number of goroutines
+because we dont know how many subdirectories in can encounter. So using done channel to signal that all goroutines are done 
+is not possible because we simply dont know how many goroutines will spawn. So the best approach is to still use the done logic
+to know number of goroutines, for example keep it for the processFile workers. But for the dynamic goroutine creation for 
+subdirectories, use syn.WaitGroup
+
+Although its not in the code, you can also buffer pairs channel. That way multiple goroutiens can write to the pairs channel
+and they wouldn't get blocked when multiple goroutines are trying to write to the same channel. But thats an example of a 
+semaphore optimization. 
+
+
+## Channels as counting semaphores
+The optimization idea here was that in the previous optimized code, searchTree function can get blocked
+if paths channel is blocked. So one way to solve that, is why not have a goroutine for each file that is 
+found? The problem with that, it can exhaust your computers CPU and memory if potentialy tens of thousand
+files is found and each tries to process and hash it at the same time. 
+
+So the idea to create one goroutine per file was kept, but what changed is how many actually get to do
+work. This is controlled by having the limits buffered channel. Limits channel is buffered up to workers
+and only allows up to workers amount to actually do the processFiles work. For example, take a look at 
+the different between previous optmized code vs the current:
+```Go
+// previous optmized code
+func processFiles(paths <-chan string, pairs chan<- pair, done chan<- bool) {
+	for path := range paths {
+		pairs <- hashFile(path) // calls hashFile and then blocks, now bunch of cpu and mem allocated for hashfile while it idly stays blocked
+	}
+
+	done <- true
+}
+
+// current optimized code
+func processFile(path string, pairs chan<- pair, wg *sync.WaitGroup, limits chan bool) {
+	defer wg.Done()
+
+	limits <- true 	// blocks before calling hashFile, so goroutine uses minimal CPU and mem
+
+	defer func() {
+		<-limits
+	}()
+
+	pairs <- hashFile(path)
+}
+```
+
+Even though both codes can potentially launch as many goroutines as files, the optimized blocks before
+any resource usage so the scheduler sort of ignores it while working only with the unblocked ones. 
+
+So yea, the idea is pretty straightforward, just create a buffered limits channel and for each goroutine
+have it try to write to it, if its full, its blocked and can't get resources to do the process, and if
+its not blocked, just write to it to signal that a worker is in progress and finally drop a data from 
+limits to signal that a new spot is free. 
+
+Evalutations:
+NOTE: increasing the buffere size to allow for more workers in progress will actually degrade the program.
+There is a sweet spot for the number of workers allowed to work because it is bound by disk contetion and I/O.
+
+Amdahl's Law: speedup of a whole program is limited by part that is parallelized
+Speedup = 1/(1 - p + (p/n))
+
+Let:
+p be the proportion of the program that can be made parallel (e.g., if 70% of a program's execution time can be parallelized, p = 0.70)
+(1 - p) is the proportion that is inherently sequential (must be run in order, p = 0.30 in the example)
+n is the number of processors (or concurrent workers)
+
+So you can find out how much of ur program is parallel. For example, benchmark Speedup shows 6.25s, n = 8 processors,
+that would give p = approximately 96% parellel program
