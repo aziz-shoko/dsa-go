@@ -1020,3 +1020,157 @@ n is the number of processors (or concurrent workers)
 
 So you can find out how much of ur program is parallel. For example, benchmark Speedup shows 6.25s, n = 8 processors,
 that would give p = approximately 96% parellel program
+
+
+# Conventional Synchronization
+Package `sync` contains the conventional synchronization stuff (as in how concurrency is handled in most languages)
+For example:
+* Mutex
+* Once
+* Pool
+* RWMutex
+* WaitGroup
+
+Package `sync/atomic` for atomic scalar reads & writes
+
+We saw a use of WaitGroup in the "file walk" example (above)
+
+The reason why conventional synchronization exists along with Go's CSP model (goroutines and channels model)
+is because sometimes multiple goroutines might write or read from a shared data. When this happens, we must make sure 
+only **one** of them can do so at any instant (in the so called "critical section")
+
+We accomplish this with some type of lock:
+* acquire the lock before accessing the data
+* any other goroutine will block waiting to get the lock
+* release the lock when done
+
+## Example
+```Go
+// counting semaphore example
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	fmt.Println(do())
+}
+
+func do() int {
+	buffer := make(chan bool, 1)	// we are making a channel to only allow one work at a time
+	var n int64			// shared data variable
+	var w sync.WaitGroup
+	
+	for i := 0; i < 1000; i++ {
+		w.Add(1)
+		go func() {
+			buffer <- true			// limit workers to allow only one worker to do work at a time		
+			n++						// all goroutines accessing and modifying the sharen n variable
+			<-buffer				// clear buffer once work is done
+			defer w.Done()
+		}()
+	}
+
+	w.Wait()
+	return int(n)
+}
+
+
+// the exact idea is achieved by the sync package using Mutex, which locks the variable and only allows one 
+// worker to do work at a time. Since this package is meant just for that, it is slightly more efficient compared
+// to the manual counting semaphore example above
+package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+func main() {
+	fmt.Println(do())
+}
+
+func do() int {
+	var m sync.Mutex		// create the mutex
+	var n int64
+	var w sync.WaitGroup
+	
+	for i := 0; i < 1000; i++ {
+		w.Add(1)
+		go func() {
+			m.Lock()		// Lock the state
+			n++
+			m.Unlock()		// unlock when done incrementing n
+			defer w.Done()
+		}()
+	}
+
+	w.Wait()
+	return int(n)
+}
+```
+
+Mutexes in action:
+```Go
+type SafeMap struct {
+	sync.Mutex			// not safe to copy
+	m map[string]int
+}
+
+// so methods must take a pointer, not a value
+func (s *SafeMap) Incr(key string) {
+	s.Lock()
+	defer.s.Unlock()
+
+	// only one goroutine can execute this code at the same time, guaranteed
+	s.m[key]++
+}
+// Using defer is good habit, avoids mistakes
+```
+
+Mutexes are typically embedded into structs so that the Lock and Unlock becomes available to SafeMap struct
+and good practice is to just write Lock and defer Unlock at the beginning so that it locks and unlocks when 
+method is done doing its work.
+
+The type of mutex you use can depends on your writes and reads. If you are doing a lot of read operations, there is a 
+specific mutex for that. Check docs for mutex optimizations and stuff.
+
+## Only-once execution
+A `sync.Once` object allows us to ensure a functino runs only once (only the first call Do will call the function passed in)
+```Go
+var once sync.Once
+var x *singeton
+
+func initialize() {
+	x = NewSingleton()
+}
+
+func handle(w http.ResponseWriter, r *http.Request) {
+	once.Do(initialize)
+	...
+}
+```
+
+Checking x == nil in the handler is unsafe! Best to use the sync.Once method to make sure initialize runs only once
+
+## Pool
+A pool provides for efficient & safe reuse of objects, but it's a container of interface{}
+```Go
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
+func Log(w io.Writer, key, val string) {
+	b := bufPool.Get().(*bytes.Buffer) 	// reflection or type assertion?
+	b.Reset()
+	// write to it
+	w.Write(b.Bytes())
+	bufPool.Put(b)
+}
+```
+
+Ofcourse there are also stuff in sync package but above are the most useful to Go probably
