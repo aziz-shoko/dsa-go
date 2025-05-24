@@ -1174,3 +1174,82 @@ func Log(w io.Writer, key, val string) {
 ```
 
 Ofcourse there are also stuff in sync package but above are the most useful to Go probably
+
+
+# Concurrency Gotchas
+
+## Concurrency Problems
+1. Race conditions, where unprotected read & writes overlap
+   * must be some data that is written to 
+   * could be a read-modify-write operation
+   * and two goroutines can do it at the same time
+
+2. deadlock, when no goroutine can make progress
+   * goroutines could be all blocked on empty channels
+   * goroutines could all be blocked waiting on a mutex
+   * GC could be prevented from running (busy loop)
+
+Go detects some deadlocks automatically; with `-race` it can find some data races
+
+3. goroutine leak
+   * goroutine hangs on a empty or blocked channel
+   * not deadlock: other goroutines make progress
+   * often found by looking at `pprof` output
+
+When you start a goroutine, always know how/when it will end
+
+4. channel errors
+   * trying to send on a closed channel
+   * trying to send or receive on a nil channel
+   * closing a nil channel
+   * closing a channel twice
+
+5. other errors
+   * closure capture
+   * misuse of Mutex
+   * misuse of WaitGroup
+   * misuse of select
+
+A good taxonomy of Go concurrency errors may be found in this paper:
+http://cseweb.ucsd.edu/~yiying/GoStudy-ASPLOS19.pdf
+
+Many of the errors are basic & should easily be found by review;
+maybe we'll get static analysis tools to help find them
+
+
+Closure Capture Problem:
+A goroutine closure shouldn't capture a mutating variable
+```Go
+for i := 0; i < 10; i++ { // WRONG
+	go func() {
+		fmt.Println(i)
+	}()
+}
+
+// Instead, pass the variable's value as a parameter
+for i := 0; i < 10; i++ {
+	go func (i int) {
+		fmt.Println(i)
+	}(i)
+}
+```
+
+Select Problems:
+`select` can be challenging and lead to mistakes
+* default is always active (if you put select in for loop with default, it might eat up a lot of CPU)
+* a nil channel is always ignored
+* a full channel (for send) is skipped over
+* a "done" channel is just another channel
+* available channels are selected at random (NOT TOP TO BOTTOM!)
+
+
+Four considerations when using concurrency
+1. Don't start a goroutine without knowing how it will stop
+2. Acquire locks/semaphores as late as possible; release them in the reverse order
+(In other words, "Acquire locks as late as possible" means you should delay grabbing
+a lock until the exact moment you need it, and hold it for the shortest time possible.
+And releasing them in reverse order is for keeping the order of locks and unlocks 
+consistent across other goroutines to prevent deadlocks (dining philosophers problem))
+3. Don't wait for non-parallel work that you could do yourself (as in only use goroutines 
+when concurrency actually makes sense, dont abuse goroutines)
+4. Simplify! Review! Test! 
