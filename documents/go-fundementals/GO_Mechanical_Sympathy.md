@@ -147,4 +147,80 @@ BenchmarkStringConcat-8    1000000    1234 ns/op    48 B/op    2 allocs/op
 * `2 allocs/op`: Number of allocations per operation (with -benchmem)
 
 
+# Profiling
+For profiling instructions, go to:
+[Youtube](https://www.youtube.com/watch?v=MDB2x1Di5uM&list=PLoILbKo9rG3skRCj37Kn5Zj803hhiuRK6&index=36)
 
+
+# Static Analysis
+Static Analysis, or also known as linting, are tools that are used to make the code better before 
+actually running the code. 
+
+"Static" means the program isn't running ("compile time")
+
+Static analsysis transfers effor from people to tools
+* mental effort while coding 
+* code review effort
+
+Static analysis improves code hygiene 
+* correctness
+* efficiency
+* readability
+* maintainability
+
+If our code compiles & passes static analysis, we can have a lot of confidence in it even before
+running unit tests.
+
+I run these tools in my IDE every time i save a file:
+* format the code
+* fix the imports
+* looks for issues
+
+`go fmt` will put your code in standard form (spacing, indentation)
+`go imports` will do that and also update import lists
+`go lint` will check for non-format style issues, for example:
+* exported names should have comments for `godoc`
+* names shouldn't have `under_scores` or be in `ALLCAPS`
+* `panic` shouldn't be used for normal error handling
+* the error flow should be indented, the happy path not
+* variable declarations shouldn't have redundant type info
+
+The "rules" are based on Effective Go and Google's Go Code Review Comments
+
+`go vet` will find some issues the compiler won't
+* suspicious "printf" format strings
+* accidentally copying a mutex type
+* possibly invalid integer shifts
+* possibly invalid atomic assignments
+* possibly invalid struct tags
+* unreachable code
+
+`go cyclo` reports high cyclomatic complexity in functions 
+(general rule is to only break up functions if cyclomatic complexity gets too high)
+
+No static analysis tool can find all possible errors
+And there are many other go commands
+
+## One tool to rule them all
+All the tools can be runned using `golangci-lint` package
+It can be configured with `.golangci.yml`
+
+It can be used in the CI/CD pipeline
+Issues must be fixed for the build to pass
+
+False positivescan be marked with //nolint
+
+## Same VSC settings
+```json
+{
+    "go.vetOnSave": "package",
+    "go.formatTool": "goimports",
+    "go.formatFlags": [
+        "-local github.com/xxx,github.com/yyy"
+    ],
+    "go.lintTool": "golangci-lint",
+    "go.lintFlags": [
+        "--fast"
+    ],
+    "go.lintOnSave": "package"
+}
